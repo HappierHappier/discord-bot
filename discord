@@ -1,0 +1,163 @@
+import discord
+from discord.ext import commands
+import re
+from collections import defaultdict
+import datetime
+from pytz import timezone
+
+# Set timezone to GMT-4 (Eastern Daylight Time)
+GMT_4 = timezone('America/New_York')
+
+# Bot intents and creation
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+intents.guilds = True  # Required to access roles
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Role ID to monitor
+ROLE_ID_TO_MONITOR = 1295445766336282724
+
+# Channel for logging violations
+log_channel_id = 1295443541643755592
+
+# Offensive word patterns (with bypass detection)
+offensive_words = [
+    # A
+    r'\barse\b', r'\barsehead\b', r'\barsehole\b', r'\bass\b', r'\bass[- ]?hole\b', r'\basshole\b',
+
+    # B
+    r'\bbastard\b', r'\bbitch\b', r'\bbloody\b', r'\bbollocks\b', r'\bbrotherfucker\b', r'\bbugger\b', r'\bbullshit\b',
+
+    # C
+    r'\bchild[- ]?fucker\b', r'\bChrist on a bike\b', r'\bChrist on a cracker\b', r'\bcock\b', r'\bcocksucker\b',
+    r'\bcrap\b', r'\bcunt\b',
+
+    # F
+    r'\bfather[- ]?fucker\b', r'\bfatherfucker\b', r'\bfuck\b', r'\bfucker\b', r'\bfucking\b', r'\bfucked\b',
+
+    # G
+    r'\bgod dammit\b', r'\bgod damn\b', r'\bgoddammit\b', r'\bGod damn\b', r'\bgoddamn\b', r'\bGoddamn\b',
+    r'\bgoddamned\b', r'\bgoddamnit\b', r'\bgodsdamn\b',
+
+    # H
+    r'\bhell\b', r'\bholy shit\b', r'\bhorseshit\b',
+
+    # I
+    r'\bin shit\b',
+
+    # J
+    r'\bjack[- ]?ass\b', r'\bjackarse\b', r'\bjackass\b', r'\bJesus Christ\b', r'\bJesus fuck\b', r'\bJesus H\. Christ\b',
+    r'\bJesus Harold Christ\b', r'\bJesus, Mary and Joseph\b', r'\bJesus wept\b',
+
+    # K
+    r'\bkike\b',
+
+    # M
+    r'\bmother[- ]?fucker\b', r'\bmotherfucker\b',
+
+    # N
+    r'\bn[i1]g\b', r'\bni-?g\b', r'\bn-?g\b', r'\bn[i1][gq]{2}[e3]r\b', r'\bn[i1][gq]{2}[a@]\b', r'\bn[i1][gq]{2}[gq]{2}[a@]\b',
+    r'\bn[i1][gq]{2}[gq]{2}[e3]r\b', r'\bnigga\b', r'\bnigra\b',
+
+    # P
+    r'\bpigfucker\b', r'\bpiss\b', r'\bprick\b', r'\bpussy\b',
+
+    # S
+    r'\bshit\b', r'\bshit[- ]?ass\b', r'\bshite\b', r'\bsibling[- ]?fucker\b', r'\bsisterfuck\b', r'\bsisterfucker\b',
+    r'\bslut\b', r'\bson of a bitch\b', r'\bson of a whore\b', r'\bspastic\b',
+
+    # T
+    r'\btwat\b',
+
+    # W
+    r'\bwanker\b',
+
+    # Add more as necessary...
+]
+
+# Dictionary to track repeated messages for spam detection
+user_message_history = defaultdict(list)
+
+# Helper function to check for offensive content
+def contains_offensive_word(message):
+    msg_lower = message.content.lower()
+    for pattern in offensive_words:
+        if re.search(pattern, msg_lower):
+            return True
+    return False
+
+# Spam detection helper (Delete all 3 messages if repeated)
+async def handle_spam(message):
+    user_history = user_message_history[message.author.id]
+    user_history = [msg for msg in user_history if (datetime.datetime.utcnow() - msg[0]).seconds < 30]
+    user_message_history[message.author.id] = user_history
+    
+    if len(user_history) >= 2 and all(msg[1] == message.content for _, msg in user_history[-2:]):
+        # Delete all three messages
+        for _, old_msg in user_history[-2:]:
+            await old_msg.delete()
+        await message.delete()
+        return True
+    user_message_history[message.author.id].append((datetime.datetime.utcnow(), message))
+    return False
+
+# Sentence limit check (maximum of 4 sentences)
+def exceeds_sentence_limit(message):
+    sentence_count = len(re.split(r'[.!?]', message.content))
+    return sentence_count > 4
+
+@bot.event
+async def on_ready():
+    print(f'Bot is ready as {bot.user}')
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    log_channel = bot.get_channel(log_channel_id)
+    
+    # Check if the user has the monitored role
+    role = discord.utils.get(message.guild.roles, id=ROLE_ID_TO_MONITOR)
+    if role in message.author.roles:
+        await message.delete()
+        await message.author.send("Messages from users with this role are automatically deleted.")
+        time_now = datetime.datetime.now(GMT_4).strftime("%Y-%m-%d %I:%M:%S %p")
+        await log_channel.send(
+            f"Violation: Message from user with restricted role deleted\n"
+            f"User: {message.author}\n"
+            f"Time (GMT-4): {time_now}\n"
+            f"Message: {message.content}"
+        )
+        return
+
+    # Check for offensive content
+    if contains_offensive_word(message):
+        await message.delete()
+        await message.author.send("Please do not use offensive language.")
+        time_now = datetime.datetime.now(GMT_4).strftime("%Y-%m-%d %I:%M:%S %p")
+        await log_channel.send(
+            f"Violation: Offensive content detected\n"
+            f"User: {message.author}\n"
+            f"Time (GMT-4): {time_now}\n"
+            f"Message: {message.content}"
+        )
+        return
+
+    # Check for spam (delete all three messages if detected)
+    if await handle_spam(message):
+        await message.author.send("Please avoid spamming messages.")
+        return
+
+    # Sentence limit check (delete message if it exceeds 4 sentences)
+    if exceeds_sentence_limit(message):
+        await message.delete()
+        await message.author.send("Please limit your messages to 4 sentences.")
+        return
+
+    await bot.process_commands(message)
+
+# Replace with your bot token
+bot.run('MTI5NTQ0NDk1NzYyODMzODI5OQ.GFI8Fd.XTC6eiCR2fEPoXGdNDI4bCYgp0zRY5dqa8xnGU')
+
