@@ -159,5 +159,5 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # Replace with your bot token
-bot.run('MTI5NTQ0NDk1NzYyODMzODI5OQ.GFI8Fd.XTC6eiCR2fEPoXGdNDI4bCYgp0zRY5dqa8xnGU')
+bot.run('MTI5NTQ0NDk1NzYyODMzODI5OQ.GbMO1g.vAPv628mtCQoUxmOEtX2H9QWYXRFu6f91Ba8Z0')
 
